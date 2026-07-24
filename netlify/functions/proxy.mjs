@@ -24,6 +24,21 @@ export default async (req) => {
     return new Response("Invalid url parameter", { status: 400, headers: cors });
   }
 
+  const CHALLENGE = /just a moment|checking your browser|challenge-platform|_cf_chl|cf-turnstile|attention required/i;
+  const scraperKey = (typeof process !== "undefined" && process.env && process.env.SCRAPER_API_KEY) || "";
+
+  const reply = (text, upStatus) => new Response(text, {
+    status: 200,
+    headers: {
+      ...cors,
+      "x-upstream-status": String(upStatus),
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store"
+    }
+  });
+
+  // Attempt 1: direct server-side fetch with browser headers
+  let text = "", upStatus = 0;
   try {
     const upstream = await fetch(target.href, {
       redirect: "follow",
@@ -34,22 +49,27 @@ export default async (req) => {
         "accept-language": "en-US,en;q=0.9"
       }
     });
-    const text = await upstream.text();
-    return new Response(text, {
-      status: 200,
-      headers: {
-        ...cors,
-        "x-upstream-status": String(upstream.status),
-        "content-type": "text/plain; charset=utf-8",
-        "cache-control": "no-store"
-      }
-    });
-  } catch (e) {
-    return new Response("", {
-      status: 200,
-      headers: { ...cors, "x-upstream-status": "0", "content-type": "text/plain; charset=utf-8" }
-    });
+    text = await upstream.text();
+    upStatus = upstream.status;
+  } catch (e) { text = ""; upStatus = 0; }
+
+  const blocked = upStatus === 0 || upStatus === 403 || upStatus === 503 || CHALLENGE.test(text || "");
+  if (!blocked) return reply(text, upStatus);
+
+  // Attempt 2 (optional): escalate through ScraperAPI when a key is configured.
+  // Free key from scraperapi.com; set SCRAPER_API_KEY in this site's Netlify environment variables.
+  if (scraperKey) {
+    try {
+      const s = await fetch("https://api.scraperapi.com/?api_key=" + encodeURIComponent(scraperKey) + "&url=" + encodeURIComponent(target.href), {
+        signal: AbortSignal.timeout(25000)
+      });
+      const st = await s.text();
+      if (s.ok && st && !CHALLENGE.test(st)) return reply(st, 200);
+    } catch (e) {}
   }
+
+  // Report honestly: pass through what the direct attempt saw
+  return reply(text || "", upStatus);
 };
 
 export const config = { path: "/api/proxy" };
