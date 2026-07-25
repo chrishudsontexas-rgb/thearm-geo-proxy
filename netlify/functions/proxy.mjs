@@ -70,7 +70,7 @@ export default async (req) => {
     upStatus = upstream.status;
   } catch (e) { text = ""; upStatus = 0; }
 
-  const blocked = forceScraper || upStatus === 0 || upStatus === 403 || upStatus === 503 || CHALLENGE.test(text || "");
+  const blocked = forceScraper || upStatus === 0 || upStatus >= 400 || CHALLENGE.test(text || "");
   if (!blocked) return reply(text, upStatus);
 
   // Attempt 2 (optional): escalate through ScraperAPI when a key is configured.
@@ -88,4 +88,12 @@ export default async (req) => {
         const st = await s.text();
         if (s.ok && st && !CHALLENGE.test(st)) { scraperState = a.label + " ok, " + st.length + " chars"; return reply(st, 200, "anti-bot"); }
         scraperState = a.label + " " + (s.ok ? (CHALLENGE.test(st) ? "returned challenge page" : "empty body") : "HTTP " + s.status + (st ? ": " + st.slice(0, 100).replace(/\s+/g, " ") : ""));
-      } catch (e) { scraperState =
+      } catch (e) { scraperState = a.label + " " + (e && e.name === "TimeoutError" ? "timed out" : "fetch error"); }
+    }
+  }
+
+  // Report honestly: pass through what the direct attempt saw
+  return reply(text || "", upStatus);
+};
+
+export const config = { path: "/api/proxy" };
