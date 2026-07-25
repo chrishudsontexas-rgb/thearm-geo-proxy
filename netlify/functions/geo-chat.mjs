@@ -42,7 +42,7 @@ export default async (req) => {
     "access-control-allow-headers": "content-type",
     "content-type": "application/json"
   };
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers: cors });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (req.method !== "POST") return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers: cors });
 
   const apiKey = ((typeof process !== "undefined" && process.env && process.env.ANTHROPIC_API_KEY) || "").trim();
