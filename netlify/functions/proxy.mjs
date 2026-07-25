@@ -25,18 +25,33 @@ export default async (req) => {
   }
 
   const CHALLENGE = /just a moment|checking your browser|challenge-platform|_cf_chl|cf-turnstile|attention required/i;
-  const scraperKey = (typeof process !== "undefined" && process.env && process.env.SCRAPER_API_KEY) || "";
+  const scraperKey = ((typeof process !== "undefined" && process.env && process.env.SCRAPER_API_KEY) || "").trim();
+  const wantDebug = new URL(req.url).searchParams.get("debug") === "1";
+  let scraperState = scraperKey ? "key-present, not attempted" : "no-key";
 
-  const reply = (text, upStatus, route) => new Response(text, {
-    status: 200,
-    headers: {
-      ...cors,
-      "x-upstream-status": String(upStatus),
-      "x-proxy-route": route || "direct",
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "no-store"
+  const reply = (text, upStatus, route) => {
+    if (wantDebug) {
+      return new Response(JSON.stringify({
+        target: target.href,
+        attempt1_upstream_status: upStatus,
+        key_present: !!scraperKey,
+        scraper: scraperState,
+        served_route: route || "direct",
+        body_chars: (text || "").length
+      }, null, 2), { status: 200, headers: { ...cors, "content-type": "application/json" } });
     }
-  });
+    return new Response(text, {
+      status: 200,
+      headers: {
+        ...cors,
+        "x-upstream-status": String(upStatus),
+        "x-proxy-route": route || "direct",
+        "x-scraper": scraperState,
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store"
+      }
+    });
+  };
 
   // Attempt 1: direct server-side fetch with browser headers
   let text = "", upStatus = 0;
@@ -62,11 +77,12 @@ export default async (req) => {
   if (scraperKey) {
     try {
       const s = await fetch("https://api.scraperapi.com/?api_key=" + encodeURIComponent(scraperKey) + "&url=" + encodeURIComponent(target.href), {
-        signal: AbortSignal.timeout(25000)
+        signal: AbortSignal.timeout(22000)
       });
       const st = await s.text();
-      if (s.ok && st && !CHALLENGE.test(st)) return reply(st, 200, "anti-bot");
-    } catch (e) {}
+      if (s.ok && st && !CHALLENGE.test(st)) { scraperState = "ok, " + st.length + " chars"; return reply(st, 200, "anti-bot"); }
+      scraperState = s.ok ? (CHALLENGE.test(st) ? "returned challenge page" : "empty body") : "HTTP " + s.status + (st ? ": " + st.slice(0, 120).replace(/\s+/g, " ") : "");
+    } catch (e) { scraperState = e && e.name === "TimeoutError" ? "timed out" : "fetch error"; }
   }
 
   // Report honestly: pass through what the direct attempt saw
