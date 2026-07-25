@@ -28,6 +28,7 @@ export default async (req) => {
   const scraperKey = ((typeof process !== "undefined" && process.env && process.env.SCRAPER_API_KEY) || "").trim();
   const wantDebug = new URL(req.url).searchParams.get("debug") === "1";
   const forceScraper = new URL(req.url).searchParams.get("force_scraper") === "1";
+  const mode = new URL(req.url).searchParams.get("mode") || "";
   let scraperState = scraperKey ? "key-present, not attempted" : "no-key";
 
   const reply = (text, upStatus, route) => {
@@ -56,10 +57,10 @@ export default async (req) => {
 
   // Attempt 1: direct server-side fetch with browser headers
   let text = "", upStatus = 0;
-  if (!forceScraper) try {
+  if (!forceScraper && mode !== "scraper") try {
     const upstream = await fetch(target.href, {
       redirect: "follow",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(8000),
       headers: {
         "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,text/plain;q=0.8,*/*;q=0.7",
@@ -70,15 +71,16 @@ export default async (req) => {
     upStatus = upstream.status;
   } catch (e) { text = ""; upStatus = 0; }
 
-  const blocked = forceScraper || upStatus === 0 || upStatus >= 400 || CHALLENGE.test(text || "");
+  const blocked = forceScraper || mode === "scraper" || upStatus === 0 || upStatus >= 400 || CHALLENGE.test(text || "");
   if (!blocked) return reply(text, upStatus);
+  if (mode === "direct") return reply(text || "", upStatus); // phase 1 reports honestly; the client decides whether to call phase 2
 
   // Attempt 2 (optional): escalate through ScraperAPI when a key is configured.
   // Free key from scraperapi.com; set SCRAPER_API_KEY in this site's Netlify environment variables.
   if (scraperKey) {
     const attempts = [
-      { label: "standard", extra: "", timeout: 8000 },
-      { label: "premium", extra: "&premium=true", timeout: 20000 }
+      { label: "standard", extra: "", timeout: 6000 },
+      { label: "premium", extra: "&premium=true", timeout: 16000 }
     ];
     for (const a of attempts) {
       try {
