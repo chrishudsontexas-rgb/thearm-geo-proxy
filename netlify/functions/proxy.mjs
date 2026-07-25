@@ -27,11 +27,12 @@ export default async (req) => {
   const CHALLENGE = /just a moment|checking your browser|challenge-platform|_cf_chl|cf-turnstile|attention required/i;
   const scraperKey = (typeof process !== "undefined" && process.env && process.env.SCRAPER_API_KEY) || "";
 
-  const reply = (text, upStatus) => new Response(text, {
+  const reply = (text, upStatus, route) => new Response(text, {
     status: 200,
     headers: {
       ...cors,
       "x-upstream-status": String(upStatus),
+      "x-proxy-route": route || "direct",
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "no-store"
     }
@@ -64,7 +65,7 @@ export default async (req) => {
         signal: AbortSignal.timeout(25000)
       });
       const st = await s.text();
-      if (s.ok && st && !CHALLENGE.test(st)) return reply(st, 200);
+      if (s.ok && st && !CHALLENGE.test(st)) return reply(st, 200, "anti-bot");
     } catch (e) {}
   }
 
