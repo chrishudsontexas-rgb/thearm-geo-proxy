@@ -12,7 +12,7 @@ export default async (req) => {
     "access-control-allow-methods": "GET, OPTIONS",
     "access-control-allow-headers": "*"
   };
-  if (req.method === "OPTIONS") return new Response("", { status: 204, headers: cors });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
   let target;
   try {
