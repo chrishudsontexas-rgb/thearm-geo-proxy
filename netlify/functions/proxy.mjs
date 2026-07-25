@@ -27,6 +27,7 @@ export default async (req) => {
   const CHALLENGE = /just a moment|checking your browser|challenge-platform|_cf_chl|cf-turnstile|attention required/i;
   const scraperKey = ((typeof process !== "undefined" && process.env && process.env.SCRAPER_API_KEY) || "").trim();
   const wantDebug = new URL(req.url).searchParams.get("debug") === "1";
+  const forceScraper = new URL(req.url).searchParams.get("force_scraper") === "1";
   let scraperState = scraperKey ? "key-present, not attempted" : "no-key";
 
   const reply = (text, upStatus, route) => {
@@ -55,7 +56,7 @@ export default async (req) => {
 
   // Attempt 1: direct server-side fetch with browser headers
   let text = "", upStatus = 0;
-  try {
+  if (!forceScraper) try {
     const upstream = await fetch(target.href, {
       redirect: "follow",
       signal: AbortSignal.timeout(15000),
@@ -69,24 +70,22 @@ export default async (req) => {
     upStatus = upstream.status;
   } catch (e) { text = ""; upStatus = 0; }
 
-  const blocked = upStatus === 0 || upStatus === 403 || upStatus === 503 || CHALLENGE.test(text || "");
+  const blocked = forceScraper || upStatus === 0 || upStatus === 403 || upStatus === 503 || CHALLENGE.test(text || "");
   if (!blocked) return reply(text, upStatus);
 
   // Attempt 2 (optional): escalate through ScraperAPI when a key is configured.
   // Free key from scraperapi.com; set SCRAPER_API_KEY in this site's Netlify environment variables.
   if (scraperKey) {
-    try {
-      const s = await fetch("https://api.scraperapi.com/?api_key=" + encodeURIComponent(scraperKey) + "&url=" + encodeURIComponent(target.href), {
-        signal: AbortSignal.timeout(22000)
-      });
-      const st = await s.text();
-      if (s.ok && st && !CHALLENGE.test(st)) { scraperState = "ok, " + st.length + " chars"; return reply(st, 200, "anti-bot"); }
-      scraperState = s.ok ? (CHALLENGE.test(st) ? "returned challenge page" : "empty body") : "HTTP " + s.status + (st ? ": " + st.slice(0, 120).replace(/\s+/g, " ") : "");
-    } catch (e) { scraperState = e && e.name === "TimeoutError" ? "timed out" : "fetch error"; }
-  }
-
-  // Report honestly: pass through what the direct attempt saw
-  return reply(text || "", upStatus);
-};
-
-export const config = { path: "/api/proxy" };
+    const attempts = [
+      { label: "standard", extra: "", timeout: 8000 },
+      { label: "premium", extra: "&premium=true", timeout: 20000 }
+    ];
+    for (const a of attempts) {
+      try {
+        const s = await fetch("https://api.scraperapi.com/?api_key=" + encodeURIComponent(scraperKey) + "&url=" + encodeURIComponent(target.href) + a.extra, {
+          signal: AbortSignal.timeout(a.timeout)
+        });
+        const st = await s.text();
+        if (s.ok && st && !CHALLENGE.test(st)) { scraperState = a.label + " ok, " + st.length + " chars"; return reply(st, 200, "anti-bot"); }
+        scraperState = a.label + " " + (s.ok ? (CHALLENGE.test(st) ? "returned challenge page" : "empty body") : "HTTP " + s.status + (st ? ": " + st.slice(0, 100).replace(/\s+/g, " ") : ""));
+      } catch (e) { scraperState =
